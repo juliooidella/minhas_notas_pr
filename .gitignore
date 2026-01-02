@@ -9,4 +9,6 @@ wheels/
 # Virtual environments
 .venv
 data/
-extract_notes_my.py
+.env
+.~lock*
+*.csv

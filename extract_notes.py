@@ -29,9 +29,14 @@ def parse_nfce(soup, data):
         emissao_match = soup.find("strong", string=re.compile("Emissão"))
         if emissao_match:
             raw_date = emissao_match.next_sibling.strip()
-            # Clean date: remove "- Via Consumidor" etc. '26/12/2025 13:52:54 - Via Consumidor'
-            # We want just the date/time string, or just date. Let's keep date/time but split by " - "
-            data["data_emissao"] = raw_date.split(" -")[0].strip()
+            # Clean date: extrai apenas dd/mm/yyyy [hh:mm:ss], removendo "- Via Consumidor", offsets de fuso horário, etc.
+            match = re.search(r'(\d{2}/\d{2}/\d{4}(?:\s+\d{2}:\d{2}:\d{2})?)', raw_date)
+            data["data_emissao"] = match.group(1) if match else raw_date.split(" -")[0].strip()
+
+        # Número da Nota
+        numero_match = soup.find("strong", string=re.compile("Número:"))
+        if numero_match:
+            data["numero"] = numero_match.next_sibling.strip()
 
         # Estabelecimento
         # NFC-e: <div class="txtCenter"> <div id="u20" class="txtTopo">NAME</div> ...
@@ -75,11 +80,23 @@ def parse_nfe(soup, data):
     try:
         labels = soup.find_all("label")
         for lb in labels:
-            if "Data de Emissão" in lb.get_text():
+            lb_text = lb.get_text()
+            # Use a more flexible match for "Data de Emissão" to avoid encoding issues
+            if "Data" in lb_text and "Emiss" in lb_text:
                 val_span = lb.find_next_sibling("span")
                 if val_span:
                     raw_date = val_span.get_text(strip=True)
-                    data["data_emissao"] = raw_date.split(" -")[0].strip()
+                    # Clean date: extrai apenas dd/mm/yyyy [hh:mm:ss], removendo offsets como -03:00
+                    match = re.search(r'(\d{2}/\d{2}/\d{4}(?:\s+\d{2}:\d{2}:\d{2})?)', raw_date)
+                    data["data_emissao"] = match.group(1) if match else raw_date.split(" -")[0].strip()
+                    break
+
+        # Número da Nota NF-e
+        for lb in labels:
+            if "Número" in lb.get_text():
+                val_span = lb.find_next_sibling("span")
+                if val_span:
+                    data["numero"] = val_span.get_text(strip=True)
                     break
         
         # Estabelecimento NF-e
@@ -99,9 +116,10 @@ def parse_nfe(soup, data):
                     if row:
                         cols = row.find_all("td")
                         if len(cols) >= 2:
-                             # The establishment name is likely here
-                             # It might be in a span or direct text
-                             data["estabelecimento"] = cols[1].get_text(strip=True)
+                             # Limpa o rótulo que às vezes vem junto no get_text()
+                             est_text = cols[1].get_text(strip=True)
+                             est_text = est_text.replace("Nome / Razão Social", "").strip()
+                             data["estabelecimento"] = est_text
 
         tables = soup.select("table.box")
         current_item = {}
@@ -135,6 +153,7 @@ async def scrape_invoice(context, url):
     result_data = {
         "url": url,
         "tipo": "Desconhecido",
+        "numero": "",
         "estabelecimento": "",
         "data_emissao": "",
         "itens": []
@@ -355,6 +374,7 @@ async def main():
                 base = {
                     "URL": res["url"],
                     "Tipo": res["tipo"],
+                    "Número": res["numero"],
                     "Estabelecimento": res["estabelecimento"],
                     "Data Emissão": res["data_emissao"]
                 }
